@@ -1,0 +1,16 @@
+node_modules/
+web/node_modules/
+web/dist/
+web/tsconfig.tsbuildinfo
+
+.env
+.env.local
+.env.*.local
+
+*.log
+.codex-*.log
+
+.DS_Store
+Thumbs.db
+
+server/uploads/

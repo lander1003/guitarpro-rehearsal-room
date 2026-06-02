@@ -1,0 +1,22 @@
+{
+  "name": "0110-rehearsal-room",
+  "version": "1.0.0",
+  "private": true,
+  "description": "零幺幺零排练房：跨平台局域网乐队同步看谱工具",
+  "type": "module",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev -w server\" \"npm run dev -w web\"",
+    "stop": "kill-port 3000 3010",
+    "start": "npm run start -w server",
+    "build": "npm run build -w web",
+    "check": "npm run check -w web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "kill-port": "^2.0.1"
+  }
+}
