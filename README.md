@@ -125,7 +125,7 @@ npm run start    # Start the backend entry
 - **Config**: `playerMode` set to `EnabledSynthesizer` (2) to always use SoundFont synthesis for MIDI playback, even when a backing track is present.
 - **Improved Chinese filename handling**: Server-side Content-Disposition headers now properly encode Chinese characters. Mojibake detection and repair for uploaded filenames.
 
-### v1.0.0 (2025-11-xx)
+### v1.0.0 (2026-06-02)
 
 - Initial release.
 

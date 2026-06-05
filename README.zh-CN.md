@@ -132,7 +132,7 @@ npm run start    # 运行后端生产入口
 - **配置调整**：`playerMode` 设为 `EnabledSynthesizer`（2），始终使用 SoundFont 合成 MIDI，不因检测到音频轨而切到只播放音频的模式。
 - **中文文件名改进**：服务端 Content-Disposition 正确编码中文文件名，上传文件名乱码自动检测和修复。
 
-### v1.0.0 (2025-11)
+### v1.0.0 (2026-06-02)
 
 - 首个版本。
 
