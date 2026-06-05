@@ -81,7 +81,7 @@ function looksMojibake(value: string) {
 
 function cleanTitle(primary?: string, fallback = "未命名谱子") {
   const value = primary?.trim();
-  if (!value || looksMojibake(value)) return fallback;
+  if (!value || value === "Untitled" || value === "未命名谱子" || looksMojibake(value)) return fallback;
   return value;
 }
 
@@ -452,6 +452,7 @@ function AlphaTabScore({
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const apiRef = useRef<AlphaTabApi | null>(null);
+  const backingTrackRef = useRef<{ audio: HTMLAudioElement; url: string } | null>(null);
   const [status, setStatus] = useState("等待房主上传谱子");
   const [error, setError] = useState("");
   const [tracks, setTracks] = useState<TrackInfo[]>([]);
@@ -482,6 +483,7 @@ function AlphaTabScore({
       },
       player: {
         enablePlayer: true,
+        playerMode: 2,
         soundFont: "/soundfont/sonivox.sf3",
         scrollElement: container
       }
@@ -501,8 +503,9 @@ function AlphaTabScore({
         shortName: cleanTitle(track.shortName, `T${track.index + 1}`)
       }));
       setTracks(availableTracks);
-      setTrackControls((current) =>
-        availableTracks.map((track) => {
+      const hasBackingTrack = !!(score as any).backingTrack?.rawAudioFile;
+      setTrackControls((current) => {
+        const controls = availableTracks.map((track) => {
           const existing = current.find((item) => item.index === track.index);
           return {
             ...track,
@@ -510,11 +513,22 @@ function AlphaTabScore({
             muted: existing?.muted ?? false,
             volume: existing?.volume ?? 1
           };
-        })
-      );
+        });
+        if (hasBackingTrack) {
+          controls.push({
+            index: -1,
+            name: "音频轨",
+            shortName: "Audio",
+            solo: false,
+            muted: false,
+            volume: 1
+          });
+        }
+        return controls;
+      });
       setSelectedTrack((current) => availableTracks.some((track) => track.index === current) ? current : availableTracks[0]?.index ?? 0);
-      setScoreTitle(cleanTitle(score.title, song?.title ?? "未命名谱子"));
-      setStatus("已载入谱子");
+      setScoreTitle(cleanTitle((score as any).title, song?.title ?? "未命名谱子"));
+      setStatus(hasBackingTrack ? "已载入谱子（检测到音频轨，已切换合成器播放）" : "已载入谱子");
       setError("");
     });
 
@@ -525,9 +539,22 @@ function AlphaTabScore({
     api.playerReady.on(() => {
       onPlayerReady?.(true);
       setStatus("谱面和播放器已准备好");
+      if (role === "host") {
+        setupBackingTrack(api);
+      }
     });
 
     api.playerStateChanged.on((args: { state: unknown }) => {
+      // Sync backing track (read current audio from ref dynamically)
+      const bt = backingTrackRef.current;
+      if (bt) {
+        if (args.state === alphaTab.synth.PlayerState.Playing) {
+          bt.audio.play().catch(() => {});
+        } else {
+          bt.audio.pause();
+        }
+      }
+      // Host playback broadcast
       if (role === "host") {
         onPlayback?.({
           isPlaying: args.state === alphaTab.synth.PlayerState.Playing,
@@ -539,10 +566,16 @@ function AlphaTabScore({
 
     api.playerPositionChanged.on((args: { currentTime: number; endTime: number }) => {
       setDurationMs(args.endTime);
-      if (role === "host") {
-        followPlaybackCursor();
+      // Sync backing track seek
+      const bt = backingTrackRef.current;
+      if (bt && role === "host") {
+        const audioMs = bt.audio.currentTime * 1000;
+        if (args.currentTime > 0 && Math.abs(audioMs - args.currentTime) > 600) {
+          bt.audio.currentTime = args.currentTime / 1000;
+        }
       }
       if (role === "host") {
+        followPlaybackCursor();
         onPlayback?.({
           isPlaying: api.playerState === alphaTab.synth.PlayerState.Playing,
           positionMs: args.currentTime,
@@ -554,6 +587,11 @@ function AlphaTabScore({
     return () => {
       onApiReady?.(null);
       onPlayerReady?.(false);
+      if (backingTrackRef.current) {
+        backingTrackRef.current.audio.pause();
+        URL.revokeObjectURL(backingTrackRef.current.url);
+        backingTrackRef.current = null;
+      }
       api.destroy();
       apiRef.current = null;
     };
@@ -605,9 +643,21 @@ function AlphaTabScore({
         return response.arrayBuffer();
       })
       .then((buffer) => {
-        const accepted = api.load(buffer, [selectedTrack]);
-        if (!accepted) {
-          throw new Error("alphaTab 不支持这个文件内容");
+        const score = alphaTab.importer.ScoreLoader.loadScoreFromBytes(new Uint8Array(buffer));
+        const trackIndex = score.tracks.some((track) => track.index === selectedTrack) ? selectedTrack : 0;
+        if (trackIndex !== selectedTrack) {
+          setSelectedTrack(trackIndex);
+        }
+        api.renderScore(score, [trackIndex]);
+
+        if (role === "host") {
+          // Clean up previous song's backing track before setting up new one
+          if (backingTrackRef.current) {
+            backingTrackRef.current.audio.pause();
+            URL.revokeObjectURL(backingTrackRef.current.url);
+            backingTrackRef.current = null;
+          }
+          setupBackingTrack(api);
         }
       })
       .catch((loadError: Error) => {
@@ -674,6 +724,13 @@ function AlphaTabScore({
     if (!api || scoreTracks.length === 0) return;
 
     for (const control of nextControls) {
+      if (control.index === -1) {
+        const audioEl = backingTrackRef.current?.audio;
+        if (audioEl) {
+          audioEl.volume = control.muted ? 0 : control.volume;
+        }
+        continue;
+      }
       const track = scoreTracks.find((item: { index: number }) => item.index === control.index);
       if (!track) continue;
       api.changeTrackSolo([track], control.solo);
@@ -720,6 +777,31 @@ function AlphaTabScore({
     }, 300);
   }
 
+  function setupBackingTrack(api: AlphaTabApi) {
+    const score = api.score;
+
+    // Clean up previous backing track first (e.g. when song changes)
+    if (backingTrackRef.current) {
+      backingTrackRef.current.audio.pause();
+      URL.revokeObjectURL(backingTrackRef.current.url);
+      backingTrackRef.current = null;
+    }
+
+    if (!score?.backingTrack?.rawAudioFile) {
+      setStatus("谱面和播放器已准备好");
+      return;
+    }
+
+    const blob = new Blob([score.backingTrack.rawAudioFile as BlobPart]);
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.volume = 1.0;
+
+    backingTrackRef.current = { audio, url };
+
+    setStatus("谱面和播放器已准备好（音频轨已就绪）");
+  }
+
   const fileSize = useMemo(() => {
     if (!song?.size) return "";
     return `${(song.size / 1024).toFixed(1)} KB`;
@@ -727,7 +809,8 @@ function AlphaTabScore({
 
   const shellClass = fullscreen ? "score-view fullscreen" : "score-view";
   const displayTitle = song ? cleanTitle(scoreTitle, song.title) : "等待房主上传谱子";
-  const progressPercent = playback?.durationMs ? Math.min(1, (playback.positionMs ?? 0) / playback.durationMs) : 0;
+  const displayDurationMs = playback?.durationMs || durationMs;
+  const progressPercent = displayDurationMs ? Math.min(1, ((playback?.positionMs ?? 0) / displayDurationMs)) : 0;
 
   return (
     <div className={shellClass}>
@@ -794,7 +877,7 @@ function AlphaTabScore({
             <div className="mixer-list">
               {trackControls.map((track) => (
                 <div className="mixer-row" key={track.index}>
-                  <span className="track-name">{track.index + 1}. {track.name}</span>
+                  <span className="track-name">{track.index === -1 ? track.name : `${track.index + 1}. ${track.name}`}</span>
                   <button
                     className={track.solo ? "mini-toggle active" : "mini-toggle"}
                     type="button"
@@ -846,7 +929,7 @@ function AlphaTabScore({
         >
           <span className="progress-fill" style={{ width: `${progressPercent * 100}%` }} />
         </button>
-        <span>{formatMs(playback?.durationMs)}</span>
+        <span>{formatMs(displayDurationMs)}</span>
       </div>
 
       <div ref={containerRef} className="alphatab-container" />

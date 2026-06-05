@@ -1,6 +1,6 @@
 # 零幺幺零线上排练房 / guitarpro-rehearsal-room
 
-[![version](https://img.shields.io/badge/version-v1.0.0-1a73e8)](#)
+[![version](https://img.shields.io/badge/version-v1.0.1-1a73e8)](#)
 [![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-188038)](#)
 [![runtime](https://img.shields.io/badge/runtime-Node.js%20%2B%20WebSocket-202124)](#)
 
@@ -10,7 +10,7 @@
 
 个人排练现场的完整操作手册请看 [README.local.md](README.local.md)。
 
-## v1.0 已实现
+## v1.0.1 已实现
 
 - 房主端显示局域网访问地址和成员扫码二维码。
 - 成员扫码进入成员页，支持编辑自己的昵称。
@@ -22,6 +22,9 @@
 - 成员端会跟随房主播放位置自动滚动到当前游标附近。
 - 房主端支持开启/关闭节拍器。
 - 旧 Guitar Pro 中文文件按 `gb18030` 解码，减少 GP3-5 中文乱码。
+- **支持内嵌音频轨（backing track）**：含有音频轨的 GP 文件，MIDI 音轨通过合成器播放，音频轨通过独立音频元素同步播放。
+- **音频轨加入调音台**：混音台识别音频轨，支持 Solo/Mute/音量调节。
+- **进度条显示总时长**：点击进度条可跳转。
 
 ## 技术栈
 
@@ -115,7 +118,23 @@ npm run build    # 构建前端
 npm run start    # 运行后端生产入口
 ```
 
-## 后续计划
+## 更新日志
+
+### v1.0.1 (2026-06-06)
+
+- **音频轨支持**：含有内嵌音频轨（backing track）的 GP 文件现在可以正常播放。MIDI 音轨通过 SoundFont 合成，音频轨通过独立 `HTMLAudioElement` 播放，两者与 alphaTab 播放器同步（播放/暂停/跳转）。
+- **音频轨加入调音台**：房主混音台中新增"音频轨"虚拟轨道，支持 Solo/Mute/音量调节。
+- **进度条显示总时长**：进度条同时显示当前播放位置和总时长，点击进度条可跳转。
+- **换谱子不串音**：重新上传新谱子时，旧谱子的音频轨道会被正确停用和清理。
+- **事件监听器重构**：音频轨同步逻辑移至 alphaTab API 主事件循环，只注册一次，通过 React ref 动态读取当前音频对象——反复换谱子不会堆积失效的监听器。
+- **服务端 durationMs**：后端在 `host_playback` 消息中保留 `durationMs` 字段，成员端始终能看到总时长。
+- **谱子加载重构**：从 `api.load()` 改为 `ScoreLoader.loadScoreFromBytes()` + `api.renderScore()`，加载过程可访问 score 对象检测音频轨。
+- **配置调整**：`playerMode` 设为 `EnabledSynthesizer`（2），始终使用 SoundFont 合成 MIDI，不因检测到音频轨而切到只播放音频的模式。
+- **中文文件名改进**：服务端 Content-Disposition 正确编码中文文件名，上传文件名乱码自动检测和修复。
+
+### v1.0.0 (2025-11)
+
+- 首个版本。
 
 - 成员各自独立选择声部并记住偏好。
 - 上传文件落盘和房间重载恢复。

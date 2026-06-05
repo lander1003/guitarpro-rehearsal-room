@@ -31,6 +31,7 @@ const state = {
   playback: {
     isPlaying: false,
     positionMs: 0,
+    durationMs: 0,
     updatedAt: Date.now()
   }
 };
@@ -53,6 +54,25 @@ function getLanIp() {
     candidates[0] ??
     "localhost"
   );
+}
+
+function looksLikeMojibake(value) {
+  return /[\u0080-\u009f]/.test(value) || /[ÃÂÅÆÇÐÑÕØÞßà-ÿ]{2,}/.test(value);
+}
+
+function normalizeUploadFilename(filename) {
+  const fallback = "未命名谱子";
+  const rawName = filename?.split(/[/\\]/).pop()?.trim();
+  if (!rawName) return fallback;
+  if (!looksLikeMojibake(rawName)) return rawName;
+
+  const repaired = Buffer.from(rawName, "latin1").toString("utf8");
+  return repaired && !repaired.includes("�") ? repaired : rawName;
+}
+
+function contentDisposition(filename) {
+  const asciiFallback = filename.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_") || "song.gp";
+  return `inline; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }
 
 function getRoomInfo() {
@@ -125,9 +145,10 @@ app.post("/api/songs", upload.single("song"), (request, response) => {
     return;
   }
 
+  const title = normalizeUploadFilename(file.originalname);
   const song = {
     id: crypto.randomUUID(),
-    title: file.originalname ?? "未命名谱子",
+    title,
     size: file.size ?? 0,
     mimeType: file.mimetype || "application/octet-stream",
     uploadedAt: new Date().toISOString(),
@@ -138,7 +159,7 @@ app.post("/api/songs", upload.single("song"), (request, response) => {
   uploadedSongs.set(song.id, {
     buffer: file.buffer,
     mimeType: song.mimeType,
-    filename: song.title
+    filename: title
   });
   state.song = song;
   broadcast({
@@ -157,7 +178,7 @@ app.get("/songs/:id/file", (request, response) => {
   }
 
   response.setHeader("Content-Type", stored.mimeType);
-  response.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(stored.filename)}"`);
+  response.setHeader("Content-Disposition", contentDisposition(stored.filename));
   response.send(stored.buffer);
 });
 
@@ -235,6 +256,7 @@ wss.on("connection", (socket) => {
       state.playback = {
         isPlaying: Boolean(message.payload?.isPlaying),
         positionMs: Number(message.payload?.positionMs ?? state.playback.positionMs),
+        durationMs: Number(message.payload?.durationMs ?? state.playback.durationMs ?? 0),
         updatedAt: Date.now()
       };
       broadcast({
